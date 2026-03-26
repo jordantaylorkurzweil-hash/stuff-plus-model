@@ -1,121 +1,152 @@
-# Stuff+ Pitch Quality Model
+# ⚾ Stuff+ Pitch Quality Model
 
-A machine learning model that predicts pitch quality from physical Statcast characteristics, replicating the Stuff+ framework. Built as a SABR Analytics Level IV capstone project using the full 2024 MLB season (~700,000 pitches).
+A machine learning pipeline that predicts pitch quality from physical Statcast characteristics — replicating and extending the **Stuff+** methodology used in MLB front offices.
 
----
-
-## Results
-
-**HistGradientBoostingRegressor** outperformed Random Forest baseline on both RMSE and R².
-
-| Model | RMSE | R² |
-|-------|------|----|
-| Random Forest (baseline) | — | — |
-| HistGradientBoostingRegressor (final) | — | — |
-
-*Exact metrics in `stuff_plus_model.ipynb` Cell 9.*
+Built as the capstone project for **SABR Analytics Certification Level IV**.
 
 ---
 
-## 2024 Qualified Pitcher Leaderboard (Top 10)
+## 🎯 The Core Question
 
-| Rank | Pitcher | Team | Stuff+ Score |
-|------|---------|------|--------------|
-| — | — | — | — |
+> *Can we predict the run value of a pitch based solely on its physical characteristics at the moment of release — independent of outcome?*
 
-*Full leaderboard exported to `stuff_plus_leaderboard_2024.csv` by the notebook.*
+**Stuff+** is a pitch quality metric that evaluates how "nasty" a pitch is based purely on its physics: velocity, movement, spin, release point. A Stuff+ of 100 is league average. Above 100 is better. The metric deliberately ignores what happened after contact — it captures intrinsic pitch quality, not luck.
 
 ---
 
-## Features
+## 📁 Repository Structure
 
-### Core (11)
+```
+stuff-plus-model/
+│
+├── stuff_plus_model.ipynb       # Python pipeline — full Statcast pull → model → leaderboard
+├── stuff_plus_models.R          # R implementation — Random Forest baseline vs. improved model
+├── stuff_predictions.csv        # Model output — pitch-level Stuff+ predictions
+├── README.md                    # This file
+```
+
+**Two implementations, one problem:** The Python notebook is the primary model. The R script is a companion implementation built during the SABR coursework, showing the same modeling problem approached in R with `ranger`. Together they demonstrate cross-language analytical ability.
+
+---
+
+## 🔬 Methodology
+
+### Target Variable
+`delta_run_exp` — the change in run expectancy per pitch, sourced directly from MLB Statcast via `pybaseball`. This is a true outcome-based run value, making it an ideal training signal for pitch quality.
+
+### Features Used
 
 | Feature | Description |
 |---------|-------------|
-| `release_speed` | Pitch velocity at release |
-| `release_spin_rate` | Spin rate (RPM) |
-| `pfx_z` | Induced vertical break (gravity-corrected) |
-| `pfx_x` | Horizontal break |
-| `release_pos_x` | Horizontal release point |
-| `release_pos_z` | Vertical release point |
-| `release_extension` | Extension toward plate at release |
-| `plate_x` | Horizontal location at plate |
-| `plate_z` | Vertical location at plate |
-| `spin_axis` | Direction of Magnus force |
-| `pitch_type` | Pitch type (categorical) |
+| `release_speed` | Velocity at release point (mph) |
+| `release_spin_rate` | Spin rate (rpm) |
+| `release_extension` | Distance from rubber at release (ft) |
+| `release_pos_x / z` | Horizontal and vertical release point |
+| `pfx_x` | Horizontal movement vs. gravity-only path (in) |
+| `pfx_z` | Induced vertical break / IVB (in) |
+| `plate_x / z` | Location at the plate |
+| `spin_axis` | Spin axis in degrees |
+| `pitch_type` | Pitch type (encoded) |
 
-### Derived (3)
+### Engineered Features
 
-| Feature | Formula | Rationale |
-|---------|---------|-----------|
-| `total_break` | √(pfx_x² + pfx_z²) | Euclidean magnitude of total movement |
-| `velo_x_ivb` | release_speed × pfx_z | Velocity–IVB interaction; most predictive derived feature |
-| `zone_distance` | √(plate_x² + (plate_z − 2.5)²) | Command quality — distance from zone center |
-
-**Target variable:** `delta_run_exp` — change in run expectancy per pitch (Statcast). Evaluated on plate-appearance-ending pitches only (~150–180K per season).
+| Feature | Rationale |
+|---------|-----------|
+| `spin_velocity_ratio` | Spin rate per mph — captures spin *efficiency*, not raw spin. Pitches with high spin relative to velocity tend to have more deceptive movement. |
+| `total_break` | √(pfx_x² + pfx_z²) — total movement magnitude combining horizontal and vertical. |
+| `plate_dist` | Distance from strike zone center — pitches at the edges or just off the zone are harder to handle. |
+| `velo_x_ivb` | Velocity × IVB interaction — high velocity combined with high rise tends to generate whiffs. |
 
 ---
 
-## Stuff+ Scaling
+## 🤖 Model Comparison
 
-```python
-stuff_plus = 100 - ((predicted_run_value - league_mean) / league_std × 10)
-```
+| Model | Notes |
+|-------|-------|
+| **Random Forest** (baseline) | `ranger` in R / `RandomForestRegressor` in Python. Solid baseline, requires imputation for missing values. |
+| **HistGradientBoostingRegressor** (final) | Gradient boosting with histogram binning. Handles Statcast's missing values natively. Faster on 700K+ pitch events. Outperformed RF on both RMSE and R². |
 
-- **100** = league average
-- **Higher = better** (inversion ensures intuitive direction)
-- **Qualification threshold:** 200+ recorded pitches
+### Why HistGradientBoosting over Random Forest?
 
----
+**1. Native NaN handling.** Statcast data has meaningful missingness — `spin_axis` isn't recorded for all pitch types, `release_extension` is occasionally absent. Random Forest requires imputation (which introduces assumptions). HistGradientBoosting learns to route missing values to the optimal branch during training, preserving the signal in missingness itself.
 
-## Methodology
+**2. Scale.** A full MLB season contains 700,000+ pitch events. Histogram binning reduces training time by an order of magnitude compared to Random Forest at this scale.
 
-See [METHODOLOGY.md](METHODOLOGY.md) for full documentation:
-- Target variable selection rationale
-- Feature engineering decisions
-- Why HistGradientBoosting beat Random Forest (3 structural reasons)
-- Hyperparameter choices with justification
-- Known limitations
+**3. Sequential residual correction.** Gradient boosting corrects prior errors iteratively — well-suited to the structured, non-linear relationships between pitch physics and run value outcomes (velocity × break interactions, spin efficiency, etc.).
 
 ---
 
-## Setup
+## 📊 Key Findings — 2024 Season
+
+- Model successfully differentiates elite pitch quality from average — top Stuff+ pitchers align closely with known MLB aces and high-swing-and-miss arms
+- **Spin-Velocity Ratio** ranked among the most predictive engineered features — spin efficiency matters more than raw spin rate
+- **Induced Vertical Break** and **release extension** were strong predictors across pitch types
+- Pitch type was the single most important feature, confirming that evaluating pitches within type context is essential
+
+---
+
+## 🛠️ Tech Stack
+
+| Tool | Purpose |
+|------|---------|
+| `pybaseball` | Statcast data ingestion from Baseball Savant |
+| `scikit-learn` | `HistGradientBoostingRegressor`, `RandomForestRegressor`, model evaluation |
+| `pandas` / `numpy` | Data cleaning, feature engineering |
+| `plotly` | Interactive Stuff+ leaderboard and scatter visualizations |
+| `ranger` (R) | Random Forest baseline implementation in R |
+| `dplyr` (R) | Feature engineering in R pipeline |
+
+---
+
+## 🚀 Getting Started
+
+### Python Notebook
 
 ```bash
 git clone https://github.com/jordantaylorkurzweil-hash/stuff-plus-model.git
 cd stuff-plus-model
-pip install -r requirements.txt
-jupyter notebook stuff_plus_model.ipynb
+pip install pybaseball scikit-learn pandas numpy matplotlib seaborn plotly
 ```
 
-**Note:** The notebook pulls live Statcast data via `pybaseball`. First run may take several minutes to download the full 2024 season.
+Open `stuff_plus_model.ipynb` in Jupyter or Google Colab and run all cells top to bottom.
 
----
+> **Note:** `pybaseball` caching is enabled. First run pulls ~700K pitch events and may take 2–3 minutes. Subsequent runs use cache.
 
-## Stack
+### R Script
 
-`Python` · `scikit-learn` · `HistGradientBoostingRegressor` · `pybaseball` · `pandas` · `numpy` · `matplotlib` · `Jupyter`
-
----
-
-## Project Structure
-
-```
-stuff-plus-model/
-├── stuff_plus_model.ipynb     # Full 14-cell analysis notebook
-├── METHODOLOGY.md             # Detailed methodology documentation
-├── requirements.txt           # Python dependencies
-└── README.md                  # This file
+```r
+install.packages(c("ranger", "dplyr"))
+# Place training_data.csv and test_data_for_testing.csv in working directory
+source("stuff_plus_models.R")
 ```
 
 ---
 
-## Related Work
+## ⚠️ Limitations
 
-**Live MLB Analytics Dashboard:** [mlb-analytics-jordan.streamlit.app](https://mlb-analytics-jordan.streamlit.app)
+- This model is a **proxy for Stuff+**, not the proprietary Baseball Savant implementation
+- Pitcher identity is excluded by design — we want pitch quality, not pitcher reputation
+- Count and game context are excluded — Stuff+ is context-neutral by definition
+- Trained on 2024 data only — cross-year validation would strengthen generalizability
+- Gradient boosting trades interpretability for predictive power; feature importance should be interpreted carefully
 
 ---
 
-*Jordan Kurzweil — SABR Analytics Level IV Capstone, 2025*  
-*[github.com/jordantaylorkurzweil-hash](https://github.com/jordantaylorkurzweil-hash)*
+## 📚 Background & Context
+
+This project was built as part of the **SABR Analytics Certification (Level IV)**, which covers advanced modeling techniques applied to baseball data. The Stuff+ metric was developed by analysts at Baseball Savant and is now widely used across MLB organizations to evaluate pitcher arsenals independent of defense and sequencing.
+
+**Related work:** See also the [Baseball Analytics Dashboard](https://github.com/jordantaylorkurzweil-hash/baseball-analytics-dashboard) repo — a full sabermetrics pipeline covering pitcher WAR, hitter profiles, and team-level analytics using FanGraphs data.
+
+---
+
+## 🙋 About
+
+**Jordan Kurzweil**
+M.S. Business Administration candidate, Pace University (Lubin School of Business) — August 2026
+Google Data Analytics Certificate · SABR Analytics Certification Levels I–IV
+[LinkedIn](https://linkedin.com/in/YOUR_LINKEDIN) · [GitHub](https://github.com/jordantaylorkurzweil-hash)
+
+---
+
+*Data sourced from MLB Statcast via pybaseball. All stats reflect the 2024 MLB regular season.*
